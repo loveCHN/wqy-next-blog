@@ -2,7 +2,7 @@
 const siteMetadata = {
   title: '王青云的博客',
   author: '王青云',
-  headerTitle: 'TailwindBlog',
+  headerTitle: '王青云的技术博客',
   description: 'A blog created with Next.js and Tailwind.css',
   language: 'en-us',
   theme: 'system', // system, dark or light
