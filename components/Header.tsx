@@ -1,10 +1,11 @@
 import siteMetadata from '@/data/siteMetadata'
 import headerNavLinks from '@/data/headerNavLinks'
-import Logo from '@/data/logo.svg'
+import CatImage from '@/data/cat.jpg'
 import Link from './Link'
 import MobileNav from './MobileNav'
 import ThemeSwitch from './ThemeSwitch'
 import SearchButton from './SearchButton'
+import Image from 'next/image'
 
 const Header = () => {
   let headerClass = 'flex items-center w-full bg-white dark:bg-gray-950 justify-between py-10'
@@ -16,11 +17,11 @@ const Header = () => {
     <header className={headerClass}>
       <Link href="/" aria-label={siteMetadata.headerTitle}>
         <div className="flex items-center justify-between">
-          <div className="mr-3">
-            <Logo />
+          <div className="mr-6">
+            <Image src={CatImage} alt="cat" width={100} height={100} className="rounded-full" />
           </div>
           {typeof siteMetadata.headerTitle === 'string' ? (
-            <div className="hidden h-6 text-2xl font-semibold sm:block">
+            <div className="hidden h-6 text-3xl font-semibold sm:block">
               {siteMetadata.headerTitle}
             </div>
           ) : (

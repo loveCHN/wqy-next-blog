@@ -2,8 +2,8 @@
 const siteMetadata = {
   title: '王青云的博客',
   author: '王青云',
-  headerTitle: '王青云的技术博客测试',
-  description: 'A blog created with Next.js and Tailwind.css',
+  headerTitle: "wangqingyun's blog",
+  description: '一个前端开发者的技术博客',
   language: 'en-us',
   theme: 'system', // system, dark or light
   siteUrl: 'https://tailwind-nextjs-starter-blog.vercel.app',
