@@ -29,7 +29,6 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
     .replace(/\/page\/\d+$/, '') // Remove any trailing /page
   const prevPage = currentPage - 1 > 0
   const nextPage = currentPage + 1 <= totalPages
-
   return (
     <div className="space-y-2 pt-6 pb-8 md:space-y-5">
       <nav className="flex justify-between">
