@@ -1,7 +1,5 @@
 import 'css/prism.css'
 import 'katex/dist/katex.css'
-
-import PageTitle from '@/components/PageTitle'
 import { components } from '@/components/MDXComponents'
 import { MDXLayoutRenderer } from 'pliny/mdx-components'
 import { sortPosts, coreContent, allCoreContent } from 'pliny/utils/contentlayer'
@@ -13,6 +11,7 @@ import PostBanner from '@/layouts/PostBanner'
 import { Metadata } from 'next'
 import siteMetadata from '@/data/siteMetadata'
 import { notFound } from 'next/navigation'
+import TOCInline from 'pliny/ui/TOCInline'
 
 const defaultLayout = 'PostLayout'
 const layouts = {
@@ -113,7 +112,14 @@ export default async function Page(props: { params: Promise<{ slug: string[] }> 
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       <Layout content={mainContent} authorDetails={authorDetails} next={next} prev={prev}>
-        <MDXLayoutRenderer code={post.body.code} components={components} toc={post.toc} />
+        <div className="flex flex-col md:flex-row">
+          <div className="min-w-0 flex-1">
+            <MDXLayoutRenderer code={post.body.code} components={components} toc={post.toc} />
+          </div>
+          <aside className="fixed top-24 bottom-8 hidden overflow-y-hidden hover:overflow-y-auto xl:right-[2%] xl:block xl:w-64 2xl:right-[8%]">
+            <TOCInline toc={post.toc} />
+          </aside>
+        </div>
       </Layout>
     </>
   )

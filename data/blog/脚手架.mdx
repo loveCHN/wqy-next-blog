@@ -1,0 +1,504 @@
+---
+title: '不懂脚手架怎么开发？手把手带你读create-vite源码！'
+date: 2025-03-10T15:32:14Z
+lastmod: '2025-03-10'
+tags: ['源码', '工程化']
+draft: false
+summary: '脚手架的开发在前端架构方面是重中之重，本文通过深入剖析 Vite 官方脚手架工具 create-vite（版本 6.2.1）的源码，详细解读了其从命令行参数解析、模板选择到项目文件生成的全流程。'
+layout: PostSimple
+bibliography: references-data.bib
+---
+
+## 源码阅读注意事项
+
+`create-vite`的源码并不难，推荐从github把源码clone下来，根据本文的顺序对照着阅读。
+
+本文删除了TS类型、自定义指令等内容，目的是为了专注脚手架主流程的代码阅读体验。
+
+## 源码在哪？
+
+在vite的monorepo工程下 [点这里](https://github.com/vitejs/vite/tree/main/packages/create-vite)。
+
+本文源码的版本是6.2.1。
+
+## create的使用方法
+
+```cmd
+npm create vite
+```
+
+> `npm create 包名`等价于`npm init 包名`
+> 而`npm init 包名`等价于`npx create-包名`
+>
+> 所以`npm create vite`等价于`npx create-vite`
+
+当运行`npx create-vite`时，npx 会检查本地是否已存在`create-vite`包。如果没有，它会从 npm 仓库下载最新版本。
+
+## package.json中的bin配置
+
+在 create-vite 的 package.json 中，bin 字段定义了可执行文件的入口：
+
+```json
+  "bin": {
+    "create-vite": "index.js",
+    "cva": "index.js"
+  },
+```
+
+当 create-vite 被安装（无论是全局安装还是通过 npx 临时安装）时，npm 会在 node_modules/.bin/ 目录下生成一个指向`index.js`的可执行脚本。这个脚本本质上是一个符号链接或代理，指向真实的`index.js`文件。
+
+因此，运行 `npx create-vite` 时，实际上执行的是`node_modules/.bin/create-vite`，而这个文件会调用 create-vite 包根目录下的`index.js`。
+
+## 从入口文件开始阅读
+
+```index.js
+#!/usr/bin/env node
+import './dist/index.mjs'
+```
+
+`#!/usr/bin/env node`的作用是告诉操作系统用哪个程序来执行这个脚本文件。在这里，`/usr/bin/env node` 表示使用系统中安装的 Node.js 来运行脚本。
+
+这里import引入的是打包后的js，我们直接来看源码[/src/index.ts](https://github.com/vitejs/vite/blob/main/packages/create-vite/src/index.ts)。
+
+### 导入的第三方模块
+
+```js
+import spawn from 'cross-spawn' // 导入 cross-spawn 模块，用于跨平台地启动子进程
+import mri from 'mri' // 导入 mri 模块，用于解析命令行参数
+import * as prompts from '@clack/prompts' // 导入 @clack/prompts 模块，用于命令行交互提示
+import colors from 'picocolors' // 导入 picocolors 模块，用于在终端中输出彩色文本
+```
+
+### 导入颜色模块
+
+首先vite引入了`picocolors`，用于在终端输出各种颜色函数。
+
+```js
+// 从 colors 模块中解构出各种颜色函数
+const { blue, blueBright, cyan, green, greenBright, magenta, red, redBright, reset, yellow } =
+  colors
+```
+
+### 命令行参数解析
+
+接着，源码中定义了命令行参数的解析逻辑：
+
+```js
+const argv = mri<{
+  template?: string
+  help?: boolean
+  overwrite?: boolean
+}>(process.argv.slice(2), {
+  alias: { h: 'help', t: 'template' }, // 设置别名，例如 -h 等同于 --help
+  boolean: ['help', 'overwrite'], // 布尔类型参数
+  string: ['template'], // 字符串类型参数
+})
+```
+
+解析后的 argv 是一个对象，包含用户输入的参数。例如：
+
+```js
+// npx create-vite my-app --template react --overwrite
+console.log(argv)
+// 输出:
+// {
+//   _: ['my-app'],         // 未绑定到具体选项的参数
+//   template: 'react',     // --template 的值
+//   overwrite: true,       // --overwrite 存在则为 true
+//   help: false            // 未提供 --help，则为 false
+// }
+```
+
+### 获取当前工作目录
+
+```js
+// 获取当前工作目录 const cwd = process.cwd()
+```
+
+如果你在 /home/user/projects 目录下执行命令，cwd 的值就是 /home/user/projects
+
+### 定义模板信息
+
+```js
+const FRAMEWORKS = [
+  {
+    name: 'vanilla', // 框架名称
+    display: 'Vanilla', // 显示名称
+    color: yellow, // 颜色函数
+    variants: [
+      // 框架变体列表
+      {
+        name: 'vanilla-ts', // 变体名称
+        display: 'TypeScript', // 显示名称
+        color: blue, // 颜色函数
+      },
+      {
+        name: 'vanilla',
+        display: 'JavaScript',
+        color: yellow,
+      },
+    ],
+  },
+  //...省略
+]
+```
+
+### 生成一个模板名称列表
+
+```js
+// 从 FRAMEWORKS 中提取所有模板名称，生成一个模板名称数组
+const TEMPLATES = FRAMEWORKS.map((f) => f.variants.map((v) => v.name)).reduce(
+  (a, b) => a.concat(b),
+  []
+)
+```
+
+### 定义重命名的文件映射
+
+```js
+//例如 _gitignore 将被重命名为 .gitignore
+const renameFiles = {
+  _gitignore: '.gitignore',
+}
+```
+
+### 配置项目的默认名称
+
+```js
+const defaultTargetDir = 'vite-project'
+```
+
+全部准备工作已经就绪，开始执行init()
+
+## 主函数 init()
+
+```js
+init().catch((e) => {
+  console.error(e)
+})
+```
+
+init函数是一个异步函数，我们现在开始阅读init函数的具体实现
+
+### 命令行参数相关操作
+
+我们已经获取了argv，拿到了命令行传入的参数。
+这些参数变量后面会经常用到。
+
+```js
+  // 从命令行参数获取目标目录，如果存在则格式化目标目录，否则为 undefined
+  const argTargetDir = argv._[0]
+    ? formatTargetDir(String(argv._[0]))
+    : undefined
+  // 获取命令行传入的模板参数
+  const argTemplate = argv.template
+  // 获取是否覆盖目录的标志
+  const argOverwrite = argv.overwrite
+
+  // 格式化目标目录名称，去除前后空格和尾部斜杠
+function formatTargetDir(targetDir: string) {
+  return targetDir.trim().replace(/\/+$/g, '')
+}
+```
+
+### 获取包管理器信息
+
+```js
+// 根据环境变量中的 npm_config_user_agent 获取包管理器信息（例如 npm、yarn 等）
+//process.env.npm_config_user_agen的值类似：
+//npm/8.19.2 node/v16.17.0 linux x64
+const pkgInfo = pkgFromUserAgent(process.env.npm_config_user_agent)
+```
+
+> 在 Node.js 环境中，`process.env` 是一个对象，包含了当前进程运行时的环境变量。`npm_config_user_agent` 是由 npm在执行命令时注入的一个特定环境变量，用于标识调用该命令的包管理器的类型和版本信息。
+
+> 当你运行 `npm create vite`时，包管理器会在启动 Node.js 进程时设置 `npm_config_user_agent`，值可能为：`"npm/8.19.2 node/v16.17.0 linux x64"`
+
+pkgFromUserAgent代码如下：
+
+```js
+function pkgFromUserAgent(userAgent) {
+  if (!userAgent) return undefined
+  const pkgSpec = userAgent.split(' ')[0]
+  const pkgSpecArr = pkgSpec.split('/')
+  return {
+    name: pkgSpecArr[0],
+    version: pkgSpecArr[1],
+  }
+}
+//假如输入：npm/8.19.2 node/v16.17.0 linux x64
+//得到的结果：{name:'npm' , version:'8.19.2'}
+```
+
+### 定义取消操作的函数
+
+```js
+// 定义一个取消操作的函数，用于在用户取消时输出提示
+const cancel = () => prompts.cancel('Operation cancelled')
+```
+
+### 项目名称相关操作
+
+```js
+  let targetDir = argTargetDir
+  if (!targetDir) {
+    // 如果目标目录未指定，则提示用户输入项目名称
+    const projectName = await prompts.text({
+      message: 'Project name:',
+      defaultValue: defaultTargetDir,
+      placeholder: defaultTargetDir,
+    })
+    // 如果用户取消输入，则执行取消操作
+    if (prompts.isCancel(projectName)) return cancel()
+    // 格式化项目名称为目标目录名称
+    targetDir = formatTargetDir(projectName as string)
+  }
+```
+
+### 处理要创建的目标目录存在且非空的情况
+
+假设你在 /home/user/projects 目录下运行命令，目标是创建一个名为`my-app`的项目
+
+```cmd
+npx create-vite my-app
+```
+
+假如`/home/user/projects/my-app `已存在，且包含文件，那么进入以下逻辑：
+
+```js
+  if (fs.existsSync(targetDir) && !isEmpty(targetDir)) {
+    // 如果命令行传入了 --overwrite 参数，则直接选择覆盖，否则提示用户选择操作
+    const overwrite = argOverwrite
+      ? 'yes'
+      : await prompts.select({
+          message:
+            (targetDir === '.'
+              ? 'Current directory'
+              : `Target directory "${targetDir}"`) +
+            ` is not empty. Please choose how to proceed:`,
+          options: [
+            {
+              label: 'Cancel operation', //取消操作
+              value: 'no',
+            },
+            {
+              label: 'Remove existing files and continue', //删除现有文件并继续
+              value: 'yes',
+            },
+            {
+              label: 'Ignore files and continue', //忽略文件并继续
+              value: 'ignore',
+            },
+          ],
+        })
+    // 如果用户取消选择，则终止流程
+    if (prompts.isCancel(overwrite)) return cancel()
+    // 根据用户选择处理目录
+    switch (overwrite) {
+      case 'yes':
+        // 清空目标目录中的文件（保留 .git）
+        //emptyDir的函数实现在下方
+        emptyDir(targetDir)
+        break
+      case 'no':
+        // 取消操作并退出
+        cancel()
+        return
+    }
+  }
+
+ // 清空目录中除 .git 之外的所有文件和文件夹
+function emptyDir(dir: string) {
+  if (!fs.existsSync(dir)) {
+    return
+  }
+  for (const file of fs.readdirSync(dir)) {
+    if (file === '.git') {
+      continue
+    }
+    fs.rmSync(path.resolve(dir, file), { recursive: true, force: true })
+  }
+}
+```
+
+### 获取包名
+
+```js
+// 获取 要创建的包名 这个包名默认是项目名 会自动保存在package.json的name中
+let packageName = path.basename(path.resolve(targetDir))
+// 检查包名称是否合法，如不合法则需要输入一个合法的包名 放在package.json的name中
+if (!isValidPackageName(packageName)) {
+  const packageNameResult = await prompts.text({
+    message: 'Package name:',
+    defaultValue: toValidPackageName(packageName),
+    placeholder: toValidPackageName(packageName),
+    validate(dir) {
+      if (!isValidPackageName(dir)) {
+        return 'Invalid package.json name'
+      }
+    },
+  })
+  if (prompts.isCancel(packageNameResult)) return cancel()
+  packageName = packageNameResult
+}
+```
+
+### 选择要处理的模板
+
+```js
+//例如：npx create-vite --template react-ts
+//argTemplate 为 react-ts
+let template = argTemplate
+// 初始化一个标志变量，用于记录传入的模板参数是否无效
+let hasInvalidArgTemplate = false
+// 如果传入的模板参数不在支持的模板列表中，则置空模板并记录错误标志
+if (argTemplate && !TEMPLATES.includes(argTemplate)) {
+  template = undefined
+  hasInvalidArgTemplate = true
+}
+// 如果模板未指定，则进入交互式选择流程
+if (!template) {
+  // 选择框架
+  const framework = await prompts.select({
+    message: hasInvalidArgTemplate
+      ? `"${argTemplate}" isn't a valid template. Please choose from below: `
+      : 'Select a framework:',
+    options: FRAMEWORKS.map((framework) => {
+      const frameworkColor = framework.color
+      return {
+        label: frameworkColor(framework.display || framework.name),
+        value: framework,
+      }
+    }),
+  })
+  if (prompts.isCancel(framework)) return cancel()
+
+  // 选择框架变体
+  const variant = await prompts.select({
+    message: 'Select a variant:',
+    options: framework.variants.map((variant) => {
+      const variantColor = variant.color
+      //自定义指令
+      const command = variant.customCommand
+        ? getFullCustomCommand(variant.customCommand, pkgInfo).replace(/ TARGET_DIR$/, '')
+        : undefined
+      return {
+        label: variantColor(variant.display || variant.name),
+        value: variant.name,
+        hint: command,
+      }
+    }),
+  })
+  if (prompts.isCancel(variant)) return cancel()
+
+  // 使用用户选择的变体名称作为模板
+  template = variant
+}
+```
+
+### 目录相关操作
+
+```js
+// 计算项目根目录的绝对路径
+const root = path.join(cwd, targetDir)
+// 创建项目目录
+fs.mkdirSync(root, { recursive: true })
+```
+
+这里不存在目标文件夹下有文件的情况，因为在上面已经清除了该文件夹下的所有文件。
+
+> create-vite源码中使用了很多提前return的操作，这种操作叫卫语句。他能减少很多if-else嵌套，这是个很好的开发技巧。
+
+### 开始将模板复制到用户指定的目标路径中
+
+首先开始寻找模板在create-vite项目目录中的位置
+
+```js
+const templateDir = path.resolve(fileURLToPath(import.meta.url), '../..', `template-${template}`)
+```
+
+拿到模板路径后，开始复制
+
+```js
+// 复制文件或目录，根据源路径判断是文件还是目录进行复制
+function copy(src: string, dest: string) {
+  const stat = fs.statSync(src)
+  if (stat.isDirectory()) {
+    // 如果是目录，则调用 copyDir 复制整个目录
+    copyDir(src, dest)
+  } else {
+    // 否则直接复制文件
+    fs.copyFileSync(src, dest)
+  }
+}
+  // 定义一个写文件函数，将模板文件复制或写入目标目录
+  const write = (file: string, content?: string) => {
+    // 根据 renameFiles 映射决定目标文件名称
+    const targetPath = path.join(root, renameFiles[file] ?? file)
+    if (content) {
+      // 如果提供了内容，则直接写入该内容到文件中
+      fs.writeFileSync(targetPath, content)
+    } else {
+      // 否则从模板目录复制文件到目标路径
+      copy(path.join(templateDir, file), targetPath)
+    }
+  }
+
+  // 读取模板目录中的所有文件
+  const files = fs.readdirSync(templateDir)
+  // 排除 package.json 文件，其他文件直接复制到目标目录
+  for (const file of files.filter((f) => f !== 'package.json')) {
+    write(file)
+  }
+```
+
+### 处理package.json
+
+package.json的信息，有的是用户手动输入的
+
+```js
+// 读取模板目录中的 package.json 文件，并解析为 JSON 对象
+const pkg = JSON.parse(fs.readFileSync(path.join(templateDir, `package.json`), 'utf-8'))
+
+// 将 package.json 中的 name 字段替换为用户指定的包名称
+pkg.name = packageName
+
+// 将更新后的 package.json 写入目标目录（格式化为 JSON 字符串）
+write('package.json', JSON.stringify(pkg, null, 2) + '\n')
+```
+
+走到这步，项目就创建好了，只剩一些收尾工作了！
+
+### 收尾工作
+
+```js
+  // 构造项目创建完成后的提示信息
+  let doneMessage = ''
+  const cdProjectName = path.relative(cwd, root)
+  doneMessage += `Done. Now run:\n`
+  if (root !== cwd) {
+    doneMessage += `\n  cd ${
+      cdProjectName.includes(' ') ? `"${cdProjectName}"` : cdProjectName
+    }`
+  }
+  // 根据使用的包管理器提示不同的安装及启动命令
+  // 还记得pkgInfo吗，上文有提到过，他的值可能是：{name:'npm' , version:'8.19.2'}
+  // pkgManager取自pkgInfo.name
+  switch (pkgManager) {
+    case 'yarn':
+      doneMessage += '\n  yarn'
+      doneMessage += '\n  yarn dev'
+      break
+    default:
+      doneMessage += `\n  ${pkgManager} install`
+      doneMessage += `\n  ${pkgManager} run dev`
+      break
+  }
+  // 输出最终提示信息
+  prompts.outro(doneMessage)
+}
+```
+
+## 总结
+
+感谢你能阅读到这里。`create-vite`的源码就这么多，现在你已经具备创建一个脚手架的能力。
